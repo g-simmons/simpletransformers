@@ -297,6 +297,62 @@ class LanguageModelingArgs(ModelArgs):
 
 
 @dataclass
+class MultiAVArgs(ModelArgs):
+    """
+    Model args for a MultiAVModel
+    """
+
+    model_class: str = "MultiAVModel"
+    # base_marian_model_name: str = None
+    dataset_class: Dataset = None
+    dataset_cache_dir: str = None
+    do_sample: bool = False
+    early_stopping: bool = True
+    evaluate_generated_text: bool = False
+    # faiss_d: int = 768
+    # faiss_m: int = 128
+    # include_title_in_knowledge_dataset: bool = True
+    length_penalty: float = 2.0
+    max_length: int = 20
+    max_steps: int = -1
+    num_beams: int = 1
+    num_return_sequences: int = 1
+    # rag_embed_batch_size: int = 16
+    repetition_penalty: float = 1.0
+    # save_knowledge_dataset: bool = True
+    # save_knowledge_dataset_with_checkpoints: bool = False
+    # split_text_character: str = " "
+    # split_text_n: int = 100
+    # src_lang: str = "en_XX"
+    # tgt_lang: str = "ro_RO"
+    top_k: float = None
+    top_p: float = None
+    use_multiprocessed_decoding: bool = False
+
+    def save(self, output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, "model_args.json"), "w") as f:
+            args_dict = self.get_args_for_saving()
+            if args_dict["dataset_class"] is not None:
+                args_dict["dataset_class"] = type(args_dict["dataset_class"]).__name__
+            json.dump(self.get_args_for_saving(), f)
+
+    def load(self, input_dir):
+        if input_dir:
+            model_args_file = os.path.join(input_dir, "model_args.json")
+            if os.path.isfile(model_args_file):
+                with open(model_args_file, "r") as f:
+                    model_args = json.load(f)
+                if model_args["dataset_class"]:
+                    warnings.warn(
+                        "This model was trained using a custom dataset_class."
+                        "This cannot be loaded automatically and must be specified in the model args"
+                        "when loading the model."
+                    )
+                self.update_from_dict(model_args)
+
+
+@dataclass
 class Seq2SeqArgs(ModelArgs):
     """
     Model args for a Seq2SeqModel
