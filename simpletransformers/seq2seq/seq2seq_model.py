@@ -439,7 +439,9 @@ class Seq2SeqModel:
 
         self._move_model_to_device()
 
-        train_dataset = self.load_and_cache_examples(train_data, verbose=verbose)
+        train_dataset = self.load_and_cache_examples(
+            train_data, verbose=verbose, no_cache=True
+        )
 
         os.makedirs(output_dir, exist_ok=True)
 
@@ -1302,6 +1304,7 @@ class Seq2SeqModel:
                     input_ids=input_ids,
                     num_beams=self.args.num_beams,
                     max_length=self.args.max_length,
+                    min_length=1,
                     length_penalty=self.args.length_penalty,
                     early_stopping=self.args.early_stopping,
                     repetition_penalty=self.args.repetition_penalty,
