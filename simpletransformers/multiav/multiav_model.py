@@ -1,4 +1,5 @@
 import json
+from typing import List
 import logging
 import math
 import os
@@ -1157,10 +1158,10 @@ class MultiAVModel:
 
         if self.args.evaluate_generated_text:
             to_predict = eval_data["input_text"].tolist()
-            if self.args.model_type in ["rag-token", "rag-sequence"]:
-                preds, _ = self.predict(to_predict)
-            else:
-                preds = self.predict(to_predict)
+            # if self.args.model_type in ["rag-token", "rag-sequence"]:
+            # preds, _ = self.predict(to_predict)
+            # else:
+            preds = self.predict(to_predict)
 
             result = self.compute_metrics(
                 eval_data["target_text"].tolist(), preds, **kwargs
@@ -1177,6 +1178,8 @@ class MultiAVModel:
         Evaluates the model on eval_dataset.
 
         Utility function to be used by the eval_model() method. Not intended to be used directly.
+
+        Computes eval_loss only.
         """
 
         model = self.model
@@ -1230,7 +1233,7 @@ class MultiAVModel:
 
         return results
 
-    def predict(self, to_predict):
+    def predict(self, to_predict) -> List[List[str]]:
         """
         Performs predictions on a list of text.
 
@@ -1238,7 +1241,7 @@ class MultiAVModel:
             to_predict: A python list of text (str) to be sent to the model for prediction. Note that the prefix should be prepended to the text.
 
         Returns:
-            preds: A python list of the generated sequences.
+            preds: List of list of generated sequences.
         """  # noqa: ignore flake8"
 
         self._move_model_to_device()
@@ -1373,7 +1376,9 @@ class MultiAVModel:
             #         num_return_sequences=self.args.num_return_sequences,
             #     )
 
-            # all_outputs.extend(outputs.cpu().numpy())
+            all_outputs.extend(
+                outputs.cpu().numpy()
+            )  # List of np arrays, each one output
             # if self.args.model_type in ["rag-token", "rag-sequence"]:
             #     all_retrieved.extend(retrieved_docs)
             #     all_doc_scores.extend(doc_scores.detach().cpu())
@@ -1429,12 +1434,14 @@ class MultiAVModel:
                 #     ],
                 # )
             else:
+                # collate outputs into a list of lists
                 return [
                     outputs[i : i + self.args.num_return_sequences]
                     for i in range(0, len(outputs), self.args.num_return_sequences)
                 ]
         else:
-            return outputs
+            raise NotImplementedError()
+            # return outputs
             # if self.args.model_type in ["rag-token", "rag-sequence"]:
             #     return outputs, all_retrieved, all_doc_scores
             # else:
@@ -1447,7 +1454,9 @@ class MultiAVModel:
             clean_up_tokenization_spaces=True,
         )
 
-    def compute_metrics(self, labels, preds, **kwargs):
+    def compute_metrics(
+        self, labels: List[List[str]], preds: List[List[str]], **kwargs
+    ):
         """
         Computes the evaluation metrics for the model predictions.
 
@@ -1473,7 +1482,7 @@ class MultiAVModel:
         self, data, evaluate=False, no_cache=False, verbose=True, silent=False
     ):
         """
-        Creates a Seq2SeqDataset from data.
+        Creates a MultiAVDataset from data.
 
         Utility function for train() and eval() methods. Not intended to be used directly.
         """
@@ -1581,11 +1590,12 @@ class MultiAVModel:
                     self.args.model_type in ["rag-token", "rag-sequence"]
                     and self.args.save_knowledge_dataset_with_checkpoints
                 ):
-                    output_dataset_directory = os.path.join(
-                        output_dir, "knowledge_dataset"
-                    )
-                    os.makedirs(output_dataset_directory, exist_ok=True)
-                    self.retriever.save_pretrained(output_dataset_directory)
+                    raise NotImplementedError()
+                    # output_dataset_directory = os.path.join(
+                    #     output_dir, "knowledge_dataset"
+                    # )
+                    # os.makedirs(output_dataset_directory, exist_ok=True)
+                    # self.retriever.save_pretrained(output_dataset_directory)
             else:
                 os.makedirs(os.path.join(output_dir, "encoder"), exist_ok=True)
                 os.makedirs(os.path.join(output_dir, "decoder"), exist_ok=True)

@@ -3,7 +3,7 @@ import os
 import pickle
 from multiprocessing import Pool
 from functools import partial
-from typing import Tuple
+from typing import Tuple, Dict, List, Union
 
 import pandas as pd
 import torch
@@ -317,7 +317,23 @@ def load_hf_dataset(data, encoder_tokenizer, decoder_tokenizer, args):
 #         return self.examples[index]
 
 
-def preprocess_data_bart(data):
+def preprocess_data_bart(data) -> Dict[str, Union[torch.tensor, List[torch.tensor]]]:
+    """
+    [summary]
+
+    Parameters
+    ----------
+    data : [type]
+        [description]
+
+    Returns
+    -------
+    Dict[str, Union[torch.tensor, List[torch.tensor]]]
+        Dict with keys "source_ids", "source_mask", "target_ids".
+        source_ids and source_mask are torch.tensor.
+        target_ids is a list of torch.tensor, each containing the ids for
+        one of the labels.
+    """
     input_text, target_texts, tokenizer, args = data
 
     input_ids = tokenizer.batch_encode_plus(
@@ -437,7 +453,7 @@ class MultiAVDataset(Dataset):
     def __len__(self):
         return len(self.examples)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> Dict[str, Union[torch.tensor, List[torch.tensor]]]:
         return self.examples[index]
 
 
