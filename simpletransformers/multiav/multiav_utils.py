@@ -19,6 +19,7 @@ from datasets import Features, Sequence, Value, load_dataset
 from datasets import Dataset as HFDataset
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 if transformers.__version__ < "4.2.0":
     shift_tokens_right = (
@@ -83,6 +84,7 @@ def preprocess_batch_for_hf_dataset(
             "decoder_input_ids": decoder_input_ids.squeeze(),
             "labels": labels.squeeze(),
         }
+
     elif args.model_type in ["rag-token", "rag-sequence"]:
         source_inputs = encoder_tokenizer(
             dataset["input_text"],
@@ -203,7 +205,7 @@ def load_hf_dataset(data, encoder_tokenizer, decoder_tokenizer, args):
 
 def preprocess_data_bart(
     data: Tuple[str, List[Dict[str, str]], Any, Dict], mode: str, tf: bool
-) -> List[Dict[str, Union[torch.tensor, List[torch.tensor]]]]:
+) -> Dict[str, Union[torch.tensor, List[torch.tensor]]]:
     """
     [summary]
 
@@ -217,8 +219,8 @@ def preprocess_data_bart(
 
     Returns
     -------
-    List[Dict[str, Union[torch.tensor, List[torch.tensor]]]]
-        List of dict with keys "source_ids", "source_mask", "target_ids".
+    Dict[str, Union[torch.tensor, List[torch.tensor]]]
+        dict with keys "source_ids", "source_mask", "target_ids".
         source_ids and source_mask are torch.tensor.
         target_ids is a list of torch.tensor, each containing the ids for
         one of the labels.
@@ -226,74 +228,85 @@ def preprocess_data_bart(
     input_text, target_texts, tokenizer, args = data
 
     def teacher_force_data(
-        input_text: str, target_texts: List[Dict[str, str]]
+        input_text: str, target_dicts: List[Dict[str, str]]
     ) -> Tuple[List[str], List[str]]:
         # TODO: check that all rows have the same attributes?
-        attributes = target_texts[0].keys()
+        attributes = target_dicts[0].keys()
+        print(attributes)
         input_texts = []
         target_texts = []
 
-        for target_dict in target_texts:
-            try:
-                for attribute in attributes:
-                    text = text + f"; {attribute}:"
-                    response = target_dict[attribute]
-                    input_texts.append(text)
-                    target_texts.append(response)
-                    logging.info(text[0:10] + "..." + text[-50:], "--", response)
-                    text += " " + response
-            except Exception as e:
-                logging.error(e)
+        for target_dict in target_dicts:
+            text = input_text
+            # try:
+            for attribute in attributes:
+                text = text + f"; {attribute}:"
+                response = target_dict[attribute]
+                input_texts.append(text)
+                target_texts.append(response)
+                print(text[0:10] + "..." + text[-50:], "--", response)
+                text += " " + response
+            # except Exception as e:
+            # logging.error(e)
+
         return input_texts, target_texts
 
     if mode == "train":
-        if tf:
-            input_texts, target_texts = teacher_force_data(input_text, target_texts)
-            input_ids = tokenizer.batch_encode_plus(
-                input_texts,
-                max_length=args.max_seq_length,
-                padding="max_length",
-                return_tensors="pt",
-                truncation=True,
-            )
-            target_ids = tokenizer.batch_encode_plus(
-                target_texts,
-                max_length=args.max_seq_length,
-                padding="max_length",
-                return_tensors="pt",
-                truncation=True,
-            )
-        else:
-            raise NotImplementedError()
-
-    else:
+        # if tf:
+        input_texts, target_texts = teacher_force_data(input_text, target_texts)
+        print(input_texts, target_texts)
         input_ids = tokenizer.batch_encode_plus(
-            [input_text],
+            input_texts,
             max_length=args.max_seq_length,
             padding="max_length",
             return_tensors="pt",
             truncation=True,
-        ) * len(input_texts)
+        )
+        target_ids = tokenizer.batch_encode_plus(
+            target_texts,
+            max_length=args.max_seq_length,
+            padding="max_length",
+            return_tensors="pt",
+            truncation=True,
+        )
+        print(input_ids)
+        print(target_ids)
+        # else:
+        # raise NotImplementedError()
 
-        target_ids = [
-            tokenizer.batch_encode_plus(
-                [target_text],
-                max_length=args.max_seq_length,
-                padding="max_length",
-                return_tensors="pt",
-                truncation=True,
-            )
-            for target_text in target_texts
-        ]
+    # else:
+    #     input_ids = tokenizer.batch_encode_plus(
+    #         [input_text],
+    #         max_length=args.max_seq_length,
+    #         padding="max_length",
+    #         return_tensors="pt",
+    #         truncation=True,
+    #     ) * len(input_texts)
 
-    return [
-        {
-            "source_ids": input_ids_single["input_ids"].squeeze(),
-            "source_mask": input_ids_single["attention_mask"].squeeze(),
-            "target_ids": target_ids_single["input_ids"].squeeze(),
-        }
-        for input_ids_single, target_ids_single in zip(input_ids, target_ids)
-    ]
+    #     target_ids = [
+    #         tokenizer.batch_encode_plus(
+    #             [target_text],
+    #             max_length=args.max_seq_length,
+    #             padding="max_length",
+    #             return_tensors="pt",
+    #             truncation=True,
+    #         )
+    #         for target_text in target_texts
+    #     ]
+    return {
+        "source_ids": input_ids["input_ids"].squeeze(),
+        "source_mask": input_ids["attention_mask"].squeeze(),
+        "target_ids": target_ids["input_ids"].squeeze(),
+    }
+
+    # return [
+    #     {
+    #         "source_ids": input_ids_single["input_ids"].squeeze(),
+    #         "source_mask": input_ids_single["attention_mask"].squeeze(),
+    #         "target_ids": target_ids_single["input_ids"].squeeze(),
+    #     }
+    #     for input_ids_single, target_ids_single in zip(input_ids, target_ids)
+    # ]
 
 
 class MultiAVDataset(Dataset):
@@ -342,9 +355,12 @@ class MultiAVDataset(Dataset):
                 #     )
             else:
                 exs = []
-                for d in tqdm(data, disable=args.silent):
-                    exs += preprocess_data_bart(d, mode=mode, tf=args.tf)
-                self.examples = exs
+                for data_tuple in tqdm(data, disable=args.silent):
+                    exs.append(preprocess_data_bart(data_tuple, mode=mode, tf=args.tf))
+                self.examples = (
+                    exs  # List[Dict[str, Union[torch.tensor, List[torch.tensor]]]]
+                )
+                print(exs)
 
     def __len__(self):
         return len(self.examples)

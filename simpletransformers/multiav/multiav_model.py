@@ -314,11 +314,23 @@ class MultiAVModel:
 
         tb_writer = SummaryWriter(log_dir=args.tensorboard_dir)
         train_sampler = RandomSampler(train_dataset)
+
+        def collate_fn(batch):
+            print(batch)
+            outbatch = {}
+            outbatch["source_ids"] = torch.cat([x["source_ids"] for x in batch])
+            outbatch["source_mask"] = torch.cat([x["source_mask"] for x in batch])
+            outbatch["target_ids"] = torch.cat([x["target_ids"] for x in batch])
+            return outbatch
+
+        # TODO we can have non-homogeneous sizes here depending on how many mappings exist per context
+
         train_dataloader = DataLoader(
             train_dataset,
             sampler=train_sampler,
             batch_size=args.train_batch_size,
             num_workers=self.args.dataloader_num_workers,
+            collate_fn=collate_fn,
         )
 
         if args.max_steps > 0:
@@ -561,6 +573,7 @@ class MultiAVModel:
                 mininterval=0,
             )
             for step, batch in enumerate(batch_iterator):
+                print(batch)
                 if steps_trained_in_current_epoch > 0:
                     steps_trained_in_current_epoch -= 1
                     continue
@@ -992,9 +1005,7 @@ class MultiAVModel:
             preds = self.predict(to_predict)
             labels = [mappings for context, mappings in eval_data]
 
-            result = self.compute_metrics(
-                labels, preds, **kwargs
-            )
+            result = self.compute_metrics(labels, preds, **kwargs)
             self.results.update(result)
 
         if verbose:
@@ -1140,13 +1151,21 @@ class MultiAVModel:
                 ]
                 output_tokens_collated = [
                     output_tokens[i : i + self.args.num_return_sequences]
-                    for i in range(0, len(output_tokens), self.args.num_return_sequences)
+                    for i in range(
+                        0, len(output_tokens), self.args.num_return_sequences
+                    )
                 ]
 
                 newbatch = []
-                for i, (context, continuation_list) in enumerate(zip(batch, output_tokens_collated)):
-                    for continuation_str in continuation_list[:num_continuations[i]]: # take top k continuations
-                        new_context = context + continuation_str + "," # append the values
+                for i, (context, continuation_list) in enumerate(
+                    zip(batch, output_tokens_collated)
+                ):
+                    for continuation_str in continuation_list[
+                        : num_continuations[i]
+                    ]:  # take top k continuations
+                        new_context = (
+                            context + continuation_str + ","
+                        )  # append the values
                         newbatch.append(new_context)
                 batch = newbatch
             # After looping over the attributes, we should have a list of context + attribute:value pairs
@@ -1154,13 +1173,11 @@ class MultiAVModel:
             for completed_context in batch:
                 context, output = completed_context.split(";")[0]
                 outputs[context] += [output]
-            
+
             for context in orig_batch:
                 all_outputs.append(outputs[context])
-            
-        return all_outputs
-            
 
+        return all_outputs
 
     def _decode(self, output_id):
         return self.decoder_tokenizer.decode(
