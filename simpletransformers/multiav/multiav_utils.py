@@ -217,8 +217,8 @@ def preprocess_data_bart(
 
     Returns
     -------
-    Dict[str, Union[torch.tensor, List[torch.tensor]]]
-        Dict with keys "source_ids", "source_mask", "target_ids".
+    List[Dict[str, Union[torch.tensor, List[torch.tensor]]]]
+        List of dict with keys "source_ids", "source_mask", "target_ids".
         source_ids and source_mask are torch.tensor.
         target_ids is a list of torch.tensor, each containing the ids for
         one of the labels.
@@ -240,7 +240,7 @@ def preprocess_data_bart(
                     response = target_dict[attribute]
                     input_texts.append(text)
                     target_texts.append(response)
-                    # logging.debug(text[0:10] + "..." + text[-50:], "--", response)
+                    logging.info(text[0:10] + "..." + text[-50:], "--", response)
                     text += " " + response
             except Exception as e:
                 logging.error(e)
@@ -249,20 +249,31 @@ def preprocess_data_bart(
     if mode == "train":
         if tf:
             input_texts, target_texts = teacher_force_data(input_text, target_texts)
-        else:
-            raise NotImplementedError()
-
-    else:
-        input_ids = (
-            tokenizer.batch_encode_plus(
-                [input_text],
+            input_ids = tokenizer.batch_encode_plus(
+                input_texts,
                 max_length=args.max_seq_length,
                 padding="max_length",
                 return_tensors="pt",
                 truncation=True,
             )
-            * len(input_texts)
-        )
+            target_ids = tokenizer.batch_encode_plus(
+                target_texts,
+                max_length=args.max_seq_length,
+                padding="max_length",
+                return_tensors="pt",
+                truncation=True,
+            )
+        else:
+            raise NotImplementedError()
+
+    else:
+        input_ids = tokenizer.batch_encode_plus(
+            [input_text],
+            max_length=args.max_seq_length,
+            padding="max_length",
+            return_tensors="pt",
+            truncation=True,
+        ) * len(input_texts)
 
         target_ids = [
             tokenizer.batch_encode_plus(

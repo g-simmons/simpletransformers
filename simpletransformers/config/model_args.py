@@ -319,7 +319,7 @@ class MultiAVArgs(ModelArgs):
     top_k: float = None
     top_p: float = None
     use_multiprocessed_decoding: bool = False
-    attributes: List[str] = []
+    attributes: List[str] = field(default_factory=list)
 
     def save(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)
