@@ -309,6 +309,7 @@ class MultiAVArgs(ModelArgs):
     do_sample: bool = False
     early_stopping: bool = True
     evaluate_generated_text: bool = False
+    tf: bool = True,
     # faiss_d: int = 768
     # faiss_m: int = 128
     # include_title_in_knowledge_dataset: bool = True

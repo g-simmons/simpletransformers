@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Tuple, Dict
 import logging
 import math
 import os
@@ -28,48 +28,9 @@ from transformers.optimization import (
 )
 from transformers.optimization import AdamW, Adafactor
 from transformers import (
-    AutoConfig,
-    AutoModel,
-    AutoTokenizer,
     BartConfig,
     BartForConditionalGeneration,
     BartTokenizerFast,
-    # MBartConfig,
-    # MBartForConditionalGeneration,
-    # MBartTokenizer,
-    # BertConfig,
-    # BertModel,
-    # BertTokenizerFast,
-    # CamembertConfig,
-    # CamembertModel,
-    # CamembertTokenizerFast,
-    # DistilBertConfig,
-    # DistilBertModel,
-    # DistilBertTokenizerFast,
-    # ElectraConfig,
-    # ElectraModel,
-    # ElectraTokenizerFast,
-    # EncoderDecoderConfig,
-    # EncoderDecoderModel,
-    # LongformerConfig,
-    # LongformerModel,
-    # LongformerTokenizerFast,
-    # MarianConfig,
-    # MarianMTModel,
-    # MarianTokenizer,
-    # MobileBertConfig,
-    # MobileBertModel,
-    # MobileBertTokenizerFast,
-    # PreTrainedModel,
-    # PreTrainedTokenizerFast,
-    # RagTokenizer,
-    # RagRetriever,
-    # RagTokenForGeneration,
-    # RagSequenceForGeneration,
-    # RagConfig,
-    # RobertaConfig,
-    # RobertaModel,
-    # RobertaTokenizerFast,
 )
 import datasets
 from datasets import load_from_disk
@@ -79,10 +40,6 @@ from simpletransformers.config.model_args import MultiAVArgs
 from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.multiav.multiav_utils import (
     MultiAVDataset,
-    SimpleSummarizationDataset,
-    # add_faiss_index_to_dataset,
-    # generate_faiss_index_dataset,
-    load_hf_dataset,
 )
 
 try:
@@ -98,19 +55,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
-    # "auto": (AutoConfig, AutoModel, AutoTokenizer),
     "bart": (BartConfig, BartForConditionalGeneration, BartTokenizerFast),
-    # "mbart": (MBartConfig, MBartForConditionalGeneration, MBartTokenizer),
-    # "bert": (BertConfig, BertModel, BertTokenizerFast),
-    # "camembert": (CamembertConfig, CamembertModel, CamembertTokenizerFast),
-    # "distilbert": (DistilBertConfig, DistilBertModel, DistilBertTokenizerFast),
-    # "electra": (ElectraConfig, ElectraModel, ElectraTokenizerFast),
-    # "longformer": (LongformerConfig, LongformerModel, LongformerTokenizerFast),
-    # "mobilebert": (MobileBertConfig, MobileBertModel, MobileBertTokenizerFast),
-    # "marian": (MarianConfig, MarianMTModel, MarianTokenizer),
-    # "rag-token": (RagConfig, RagTokenForGeneration, RagTokenizer, RagRetriever),
-    # "rag-sequence": (RagConfig, RagSequenceForGeneration, RagTokenizer, RagRetriever),
-    # "roberta": (RobertaConfig, RobertaModel, RobertaTokenizerFast),
 }
 
 
@@ -124,11 +69,6 @@ class MultiAVModel:
         encoder_decoder_name=None,
         additional_special_tokens_encoder=None,
         additional_special_tokens_decoder=None,
-        # index_name=None,
-        # knowledge_dataset=None,
-        # index_path=None,
-        # dpr_ctx_encoder_model_name=None,
-        # rag_question_encoder_model_name=None,
         config=None,
         args=None,
         use_cuda=True,
@@ -217,139 +157,23 @@ class MultiAVModel:
         if not use_cuda:
             self.args.fp16 = False
 
-        if encoder_decoder_type in ["rag-token", "rag-sequence"]:
-            raise NotImplementedError()
-            # config_class, model_class, tokenizer_class, retriever_class = MODEL_CLASSES[
-            #     encoder_decoder_type
-            # ]
-
-            # if self.args.config is not None:
-            #     config = config_class.from_pretrained(
-            #         encoder_decoder_name, **self.args.config
-            #     )
-            # elif config is not None:
-            #     config = config_class.from_pretrained(encoder_decoder_name, **config)
-
-            # self.encoder_tokenizer = tokenizer_class.from_pretrained(
-            #     encoder_decoder_name, config=config
-            # )
-            # self.decoder_tokenizer = self.encoder_tokenizer
-            # if knowledge_dataset is None:
-            #     if index_name is None:
-            #         self.retriever = retriever_class.from_pretrained(
-            #             encoder_decoder_name,
-            #             index_name="exact",
-            #             use_dummy_dataset=True,
-            #             config=config,
-            #             cache_dir=args.dataset_cache_dir,
-            #         )
-            #     elif index_name == "legacy":
-            #         self.retriever = retriever_class.from_pretrained(
-            #             encoder_decoder_name,
-            #             index_name="legacy",
-            #             use_dummy_dataset=False,
-            #             config=config,
-            #             cache_dir=args.dataset_cache_dir,
-            #         )
-            # else:
-            #     if os.path.isdir(knowledge_dataset):
-            #         self.dataset = load_from_disk(knowledge_dataset)
-            #         if index_path:
-            #             self.dataset.load_faiss_index("embeddings", index_path)
-            #         elif os.path.isfile(
-            #             os.path.join(knowledge_dataset, "hf_dataset_index.faiss")
-            #         ):
-            #             self.dataset.load_faiss_index(
-            #                 "embeddings",
-            #                 os.path.join(knowledge_dataset, "hf_dataset_index.faiss"),
-            #             )
-            #         else:
-            #             self.dataset = add_faiss_index_to_dataset(self.dataset)
-            #             if self.args.save_knowledge_dataset:
-            #                 self.dataset.get_index("embeddings").save(
-            #                     os.path.join(
-            #                         knowledge_dataset, "hf_dataset_index.faiss"
-            #                     )
-            #                 )
-            #     else:
-            #         self.dataset = generate_faiss_index_dataset(
-            #             knowledge_dataset,
-            #             ctx_encoder_name=dpr_ctx_encoder_model_name,
-            #             args=self.args,
-            #             device=self.device,
-            #         )
-            #         if self.args.save_knowledge_dataset:
-            #             self.dataset.get_index("embeddings").save(
-            #                 os.path.join(
-            #                     self.args.output_dir,
-            #                     "knowledge_dataset",
-            #                     "hf_dataset_index.faiss",
-            #                 )
-            #             )
-            #     self.retriever = RagRetriever.from_pretrained(
-            #         encoder_decoder_name,
-            #         index_name="custom",
-            #         indexed_dataset=self.dataset,
-            #         config=config,
-            #     )
-
-            # self.model = model_class.from_pretrained(
-            #     encoder_decoder_name,
-            #     retriever=self.retriever,
-            #     questioni_encoder=rag_question_encoder_model_name,
-            #     config=config,
-            # )
-            # self.config = self.model.config
+        if encoder_decoder_type:
+            config_class, model_class, tokenizer_class = MODEL_CLASSES[
+                encoder_decoder_type
+            ]
         else:
-            if encoder_decoder_type:
-                config_class, model_class, tokenizer_class = MODEL_CLASSES[
-                    encoder_decoder_type
-                ]
-            else:
-                config_class, model_class, tokenizer_class = MODEL_CLASSES[encoder_type]
+            config_class, model_class, tokenizer_class = MODEL_CLASSES[encoder_type]
 
-            if encoder_decoder_type in ["bart", "mbart", "marian"]:
-                self.model = model_class.from_pretrained(encoder_decoder_name)
-                if encoder_decoder_type in ["bart", "mbart"]:
-                    self.encoder_tokenizer = tokenizer_class.from_pretrained(
-                        encoder_decoder_name
-                    )
-                elif encoder_decoder_type == "marian":
-                    raise NotImplementedError()
-                    # if self.args.base_marian_model_name:
-                    #     self.encoder_tokenizer = tokenizer_class.from_pretrained(
-                    #         self.args.base_marian_model_name
-                    #     )
-                    # else:
-                    #     self.encoder_tokenizer = tokenizer_class.from_pretrained(
-                    #         encoder_decoder_name
-                    #     )
-                self.decoder_tokenizer = self.encoder_tokenizer
-                self.config = self.model.config
-            else:
-                raise NotImplementedError()
-                # if encoder_decoder_name:
-                #     # self.model = EncoderDecoderModel.from_pretrained(encoder_decoder_name)
-                #     self.model = EncoderDecoderModel.from_encoder_decoder_pretrained(
-                #         os.path.join(encoder_decoder_name, "encoder"),
-                #         os.path.join(encoder_decoder_name, "decoder"),
-                #     )
-                #     self.encoder_tokenizer = tokenizer_class.from_pretrained(
-                #         os.path.join(encoder_decoder_name, "encoder")
-                #     )
-                #     self.decoder_tokenizer = AutoTokenizer.from_pretrained(
-                #         os.path.join(encoder_decoder_name, "decoder")
-                #     )
-                # else:
-                #     self.model = EncoderDecoderModel.from_encoder_decoder_pretrained(
-                #         encoder_name, decoder_name, config=config
-                #     )
-                #     self.encoder_tokenizer = tokenizer_class.from_pretrained(
-                #         encoder_name
-                #     )
-                #     self.decoder_tokenizer = AutoTokenizer.from_pretrained(decoder_name)
-                # self.encoder_config = self.model.config.encoder
-                # self.decoder_config = self.model.config.decoder
+        if encoder_decoder_type in ["bart", "mbart", "marian"]:
+            self.model = model_class.from_pretrained(encoder_decoder_name)
+            if encoder_decoder_type in ["bart", "mbart"]:
+                self.encoder_tokenizer = tokenizer_class.from_pretrained(
+                    encoder_decoder_name
+                )
+            self.decoder_tokenizer = self.encoder_tokenizer
+            self.config = self.model.config
+        else:
+            raise NotImplementedError()
 
         if additional_special_tokens_encoder is not None:
             self.encoder_tokenizer.add_special_tokens(additional_special_tokens_encoder)
@@ -387,7 +211,7 @@ class MultiAVModel:
 
     def train_model(
         self,
-        train_data,
+        train_data: List[Tuple[str, List[Dict[str, str]]]],
         output_dir=None,
         show_running_loss=True,
         args=None,
@@ -460,12 +284,6 @@ class MultiAVModel:
 
         self.save_model(self.args.output_dir, model=self.model)
 
-        # model_to_save = self.model.module if hasattr(self.model, "module") else self.model
-        # model_to_save.save_pretrained(output_dir)
-        # self.encoder_tokenizer.save_pretrained(output_dir)
-        # self.decoder_tokenizer.save_pretrained(output_dir)
-        # torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
-
         if verbose:
             logger.info(
                 " Training of {} model complete. Saved to {}.".format(
@@ -477,7 +295,7 @@ class MultiAVModel:
 
     def train(
         self,
-        train_dataset,
+        train_dataset: MultiAVDataset,
         output_dir,
         show_running_loss=True,
         eval_data=None,
@@ -1121,7 +939,12 @@ class MultiAVModel:
         )
 
     def eval_model(
-        self, eval_data, output_dir=None, verbose=True, silent=False, **kwargs
+        self,
+        eval_data: List[Tuple[str, List[Dict[str, str]]]],
+        output_dir=None,
+        verbose=True,
+        silent=False,
+        **kwargs,
     ):
         """
         Evaluates the model on eval_data. Saves results to output_dir.
@@ -1157,10 +980,14 @@ class MultiAVModel:
         self.results.update(result)
 
         if self.args.evaluate_generated_text:
-            to_predict = eval_data["input_text"].tolist()
-            # if self.args.model_type in ["rag-token", "rag-sequence"]:
-            # preds, _ = self.predict(to_predict)
-            # else:
+            # TODO:
+            # For each example in the batch, append the first key
+            # call predict on the updated batch
+            # add predictions to the context, call predict again, etc
+            # until all keys have been exhausted.
+            # This doesn't allow for beam search-esque aggregation of
+            # probabilities across the keys, but it's a start.
+            to_predict = [context for context, mappings in eval_data]
             preds = self.predict(to_predict)
 
             result = self.compute_metrics(
@@ -1233,7 +1060,7 @@ class MultiAVModel:
 
         return results
 
-    def predict(self, to_predict) -> List[List[str]]:
+    def predict(self, to_predict: List[str]) -> List[List[str]]:
         """
         Performs predictions on a list of text.
 
@@ -1258,43 +1085,6 @@ class MultiAVModel:
             desc="Generating outputs",
             disable=self.args.silent,
         ):
-            # if self.args.model_type == "marian":
-            #     input_ids = self.encoder_tokenizer.prepare_seq2seq_batch(
-            #         batch,
-            #         max_length=self.args.max_seq_length,
-            #         padding="max_length",
-            #         return_tensors="pt",
-            #         truncation=True,
-            #     )["input_ids"]
-            # elif self.args.model_type in ["mbart"]:
-            #     input_ids = self.encoder_tokenizer.prepare_seq2seq_batch(
-            #         src_texts=batch,
-            #         max_length=self.args.max_seq_length,
-            #         pad_to_max_length=True,
-            #         padding="max_length",
-            #         return_tensors="pt",
-            #         truncation=True,
-            #         src_lang=self.args.src_lang,
-            #     )["input_ids"]
-            # elif self.args.model_type in ["rag-token", "rag-sequence"]:
-            #     input_ids = self.encoder_tokenizer(
-            #         batch, truncation=True, padding="longest", return_tensors="pt"
-            #     )["input_ids"].to(self.device)
-
-            #     question_hidden_states = self.model.question_encoder(input_ids)[0]
-
-            #     docs_dict = self.retriever(
-            #         input_ids.cpu().numpy(),
-            #         question_hidden_states.detach().cpu().numpy(),
-            #         return_tensors="pt",
-            #     )
-            #     doc_scores = torch.bmm(
-            #         question_hidden_states.unsqueeze(1),
-            #         docs_dict["retrieved_doc_embeds"]
-            #         .float()
-            #         .transpose(1, 2)
-            #         .to(self.device),
-            #     ).squeeze(1)
             if self.args.model_type != "bart":
                 raise NotImplementedError()
             else:
@@ -1323,72 +1113,11 @@ class MultiAVModel:
                 )
             elif self.args.model_type in ["mbart"]:
                 raise NotImplementedError()
-            #     tgt_lang_token = self.decoder_tokenizer._convert_token_to_id(
-            #         self.args.tgt_lang
-            #     )
-
-            #     outputs = self.model.generate(
-            #         input_ids=input_ids,
-            #         decoder_start_token_id=tgt_lang_token,
-            #         num_beams=self.args.num_beams,
-            #         max_length=self.args.max_length,
-            #         length_penalty=self.args.length_penalty,
-            #         early_stopping=self.args.early_stopping,
-            #         repetition_penalty=self.args.repetition_penalty,
-            #         do_sample=self.args.do_sample,
-            #         top_k=self.args.top_k,
-            #         top_p=self.args.top_p,
-            #         num_return_sequences=self.args.num_return_sequences,
-            #     )
-            # elif self.args.model_type in ["rag-token", "rag-sequence"]:
-            #     outputs = self.model.generate(
-            #         context_input_ids=docs_dict["context_input_ids"].to(self.device),
-            #         context_attention_mask=docs_dict["context_attention_mask"].to(
-            #             self.device
-            #         ),
-            #         doc_scores=doc_scores,
-            #         num_beams=self.args.num_beams,
-            #         max_length=self.args.max_length,
-            #         length_penalty=self.args.length_penalty,
-            #         early_stopping=self.args.early_stopping,
-            #         repetition_penalty=self.args.repetition_penalty,
-            #         do_sample=self.args.do_sample,
-            #         top_k=self.args.top_k,
-            #         top_p=self.args.top_p,
-            #         num_return_sequences=self.args.num_return_sequences,
-            #     )
-            #     retrieved_docs = [
-            #         doc
-            #         for doc in self.retriever.index.get_doc_dicts(docs_dict["doc_ids"])
-            #     ]
-            # else:
-            #     outputs = self.model.generate(
-            #         input_ids=input_ids,
-            #         decoder_start_token_id=self.model.config.decoder.pad_token_id,
-            #         num_beams=self.args.num_beams,
-            #         max_length=self.args.max_length,
-            #         length_penalty=self.args.length_penalty,
-            #         early_stopping=self.args.early_stopping,
-            #         repetition_penalty=self.args.repetition_penalty,
-            #         do_sample=self.args.do_sample,
-            #         top_k=self.args.top_k,
-            #         top_p=self.args.top_p,
-            #         num_return_sequences=self.args.num_return_sequences,
-            #     )
 
             all_outputs.extend(
                 outputs.cpu().numpy()
             )  # List of np arrays, each one output
-            # if self.args.model_type in ["rag-token", "rag-sequence"]:
-            #     all_retrieved.extend(retrieved_docs)
-            #     all_doc_scores.extend(doc_scores.detach().cpu())
 
-        # if self.args.model_type in ["rag-token", "rag-sequence"]:
-        #     outputs = self.encoder_tokenizer.batch_decode(
-        #         all_outputs,
-        #         skip_special_tokens=self.args.skip_special_tokens,
-        #         clean_up_tokenization_spaces=True,
-        #     )
         if self.args.use_multiprocessed_decoding:
             if self.args.multiprocessing_chunksize == -1:
                 chunksize = max(len(all_outputs) // (self.args.process_count * 2), 500)
@@ -1419,20 +1148,6 @@ class MultiAVModel:
         if self.args.num_return_sequences > 1:
             if self.args.model_type in ["rag-token", "rag-sequence"]:
                 raise NotImplementedError()
-                # return (
-                #     [
-                #         outputs[i : i + self.args.num_return_sequences]
-                #         for i in range(0, len(outputs), self.args.num_return_sequences)
-                #     ],
-                #     [
-                #         all_retrieved[i : i + self.args.num_return_sequences]
-                #         for i in range(0, len(outputs), self.args.num_return_sequences)
-                #     ],
-                #     [
-                #         all_doc_scores[i : i + self.args.num_return_sequences]
-                #         for i in range(0, len(outputs), self.args.num_return_sequences)
-                #     ],
-                # )
             else:
                 # collate outputs into a list of lists
                 return [
@@ -1441,11 +1156,6 @@ class MultiAVModel:
                 ]
         else:
             raise NotImplementedError()
-            # return outputs
-            # if self.args.model_type in ["rag-token", "rag-sequence"]:
-            #     return outputs, all_retrieved, all_doc_scores
-            # else:
-            # return outputs
 
     def _decode(self, output_id):
         return self.decoder_tokenizer.decode(
@@ -1479,7 +1189,12 @@ class MultiAVModel:
         return results
 
     def load_and_cache_examples(
-        self, data, evaluate=False, no_cache=False, verbose=True, silent=False
+        self,
+        data: List[Tuple[str, List[Dict[str, str]]]],
+        evaluate=False,
+        no_cache=False,
+        verbose=True,
+        silent=False,
     ):
         """
         Creates a MultiAVDataset from data.
@@ -1501,17 +1216,9 @@ class MultiAVModel:
 
         if self.args.use_hf_datasets:
             raise NotImplementedError("HF datasets are not supported yet.")
-            # dataset = load_hf_dataset(
-            # data, encoder_tokenizer, decoder_tokenizer, self.args
-            # )
-            # return dataset
         else:
             if args.dataset_class:
                 raise NotImplementedError("Custom datasets are not supported yet.")
-                # CustomDataset = args.dataset_class
-                # return CustomDataset(
-                # encoder_tokenizer, decoder_tokenizer, args, data, mode
-                # )
             else:
                 if args.model_type in ["bart", "mbart", "marian"]:
                     return MultiAVDataset(
@@ -1520,19 +1227,8 @@ class MultiAVModel:
                         data,
                         mode,
                     )
-
-                    # return SimpleSummarizationDataset(
-                    # encoder_tokenizer, self.args, data, mode
-                    # )
                 else:
                     raise NotImplementedError()
-                    # return MultiAVDataset(
-                    #     encoder_tokenizer,
-                    #     decoder_tokenizer,
-                    #     self.args,
-                    #     data,
-                    #     mode,
-                    # )
 
     def _create_training_progress_scores(self, **kwargs):
         extra_metrics = {key: [] for key in kwargs}
