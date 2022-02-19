@@ -4,6 +4,7 @@ import sys
 from dataclasses import asdict, dataclass, field, fields
 from multiprocessing import cpu_count
 import warnings
+from typing import List
 
 from torch.utils.data import Dataset
 
@@ -303,32 +304,22 @@ class MultiAVArgs(ModelArgs):
     """
 
     model_class: str = "MultiAVModel"
-    # base_marian_model_name: str = None
     dataset_class: Dataset = None
     dataset_cache_dir: str = None
     do_sample: bool = False
     early_stopping: bool = True
     evaluate_generated_text: bool = False
     tf: bool = True,
-    # faiss_d: int = 768
-    # faiss_m: int = 128
-    # include_title_in_knowledge_dataset: bool = True
     length_penalty: float = 2.0
     max_length: int = 20
     max_steps: int = -1
     num_beams: int = 1
     num_return_sequences: int = 1
-    # rag_embed_batch_size: int = 16
     repetition_penalty: float = 1.0
-    # save_knowledge_dataset: bool = True
-    # save_knowledge_dataset_with_checkpoints: bool = False
-    # split_text_character: str = " "
-    # split_text_n: int = 100
-    # src_lang: str = "en_XX"
-    # tgt_lang: str = "ro_RO"
     top_k: float = None
     top_p: float = None
     use_multiprocessed_decoding: bool = False
+    attributes: List[str] = []
 
     def save(self, output_dir):
         os.makedirs(output_dir, exist_ok=True)

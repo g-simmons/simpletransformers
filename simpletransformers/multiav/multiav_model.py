@@ -8,6 +8,7 @@ import warnings
 from dataclasses import asdict
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
@@ -989,9 +990,10 @@ class MultiAVModel:
             # probabilities across the keys, but it's a start.
             to_predict = [context for context, mappings in eval_data]
             preds = self.predict(to_predict)
+            labels = [mappings for context, mappings in eval_data]
 
             result = self.compute_metrics(
-                eval_data["target_text"].tolist(), preds, **kwargs
+                labels, preds, **kwargs
             )
             self.results.update(result)
 
@@ -1072,10 +1074,10 @@ class MultiAVModel:
         """  # noqa: ignore flake8"
 
         self._move_model_to_device()
+        if self.args.model_type != "bart":
+            raise NotImplementedError()
 
         all_outputs = []
-        all_retrieved = []
-        all_doc_scores = []
         # Batching
         for batch in tqdm(
             [
@@ -1085,9 +1087,13 @@ class MultiAVModel:
             desc="Generating outputs",
             disable=self.args.silent,
         ):
-            if self.args.model_type != "bart":
-                raise NotImplementedError()
-            else:
+            # Each batch should be list of str
+            # Append the first key
+            orig_batch = batch
+            batch = [context + ";" for context in batch]
+            for attribute in self.args.attributes:
+                batch = [context + " " + attribute + ":" for context in batch]
+
                 input_ids = self.encoder_tokenizer.batch_encode_plus(
                     batch,
                     max_length=self.args.max_seq_length,
@@ -1095,9 +1101,21 @@ class MultiAVModel:
                     return_tensors="pt",
                     truncation=True,
                 )["input_ids"]
-            input_ids = input_ids.to(self.device)
+                input_ids = input_ids.to(self.device)
 
-            if self.args.model_type in ["bart", "marian"]:
+                # we would first predict the number of continuations for each context
+                # (may not be uniform across contexts)
+                # Then calculate the maximum and use that as n_beams and num_return_sequences
+                # Then take the top-k with k being dependent on each context's number of continuations
+                # As a shortcut maybe add in the number of continuations to the input data
+                # batch size generally is increasing as we go through the attributes.
+                # maybe need some way to handle this.
+                # num_continuations = self.model.predict_num_continuations(input_ids)
+
+                # Temporarily set the number of continuations per context to num_return_sequences
+                # TODO how to handle aggregation of probabilities
+                num_continuations = [self.args.num_return_sequences] * len(batch)
+
                 outputs = self.model.generate(
                     input_ids=input_ids,
                     num_beams=self.args.num_beams,
@@ -1111,51 +1129,38 @@ class MultiAVModel:
                     top_p=self.args.top_p,
                     num_return_sequences=self.args.num_return_sequences,
                 )
-            elif self.args.model_type in ["mbart"]:
-                raise NotImplementedError()
-
-            all_outputs.extend(
-                outputs.cpu().numpy()
-            )  # List of np arrays, each one output
-
-        if self.args.use_multiprocessed_decoding:
-            if self.args.multiprocessing_chunksize == -1:
-                chunksize = max(len(all_outputs) // (self.args.process_count * 2), 500)
-            else:
-                chunksize = self.args.multiprocessing_chunksize
-
-            self.model.to("cpu")
-            with Pool(self.args.process_count) as p:
-                outputs = list(
-                    tqdm(
-                        p.imap(self._decode, all_outputs, chunksize=chunksize),
-                        total=len(all_outputs),
-                        desc="Decoding outputs",
-                        disable=self.args.silent,
+                outputs_cpu = outputs.cpu().numpy()
+                output_tokens = [
+                    self.decoder_tokenizer.decode(
+                        output_id,
+                        skip_special_tokens=self.args.skip_special_tokens,
+                        clean_up_tokenization_spaces=True,
                     )
-                )
-            self._move_model_to_device()
-        else:
-            outputs = [
-                self.decoder_tokenizer.decode(
-                    output_id,
-                    skip_special_tokens=self.args.skip_special_tokens,
-                    clean_up_tokenization_spaces=True,
-                )
-                for output_id in all_outputs
-            ]
-
-        if self.args.num_return_sequences > 1:
-            if self.args.model_type in ["rag-token", "rag-sequence"]:
-                raise NotImplementedError()
-            else:
-                # collate outputs into a list of lists
-                return [
-                    outputs[i : i + self.args.num_return_sequences]
-                    for i in range(0, len(outputs), self.args.num_return_sequences)
+                    for output_id in all_outputs
                 ]
-        else:
-            raise NotImplementedError()
+                output_tokens_collated = [
+                    output_tokens[i : i + self.args.num_return_sequences]
+                    for i in range(0, len(output_tokens), self.args.num_return_sequences)
+                ]
+
+                newbatch = []
+                for i, (context, continuation_list) in enumerate(zip(batch, output_tokens_collated)):
+                    for continuation_str in continuation_list[:num_continuations[i]]: # take top k continuations
+                        new_context = context + continuation_str + "," # append the values
+                        newbatch.append(new_context)
+                batch = newbatch
+            # After looping over the attributes, we should have a list of context + attribute:value pairs
+            outputs = defaultdict(lambda: [])
+            for completed_context in batch:
+                context, output = completed_context.split(";")[0]
+                outputs[context] += [output]
+            
+            for context in orig_batch:
+                all_outputs.append(outputs[context])
+            
+        return all_outputs
+            
+
 
     def _decode(self, output_id):
         return self.decoder_tokenizer.decode(

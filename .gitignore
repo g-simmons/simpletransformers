@@ -141,4 +141,5 @@ dmypy.json
 Untitled.ipynb
 
 # pycharm folders
-.idea
+.idea.vscode
+.vscode
