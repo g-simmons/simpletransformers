@@ -315,22 +315,11 @@ class MultiAVModel:
         tb_writer = SummaryWriter(log_dir=args.tensorboard_dir)
         train_sampler = RandomSampler(train_dataset)
 
-        def collate_fn(batch):
-            print(batch)
-            outbatch = {}
-            outbatch["source_ids"] = torch.cat([x["source_ids"] for x in batch])
-            outbatch["source_mask"] = torch.cat([x["source_mask"] for x in batch])
-            outbatch["target_ids"] = torch.cat([x["target_ids"] for x in batch])
-            return outbatch
-
-        # TODO we can have non-homogeneous sizes here depending on how many mappings exist per context
-
         train_dataloader = DataLoader(
             train_dataset,
             sampler=train_sampler,
             batch_size=args.train_batch_size,
             num_workers=self.args.dataloader_num_workers,
-            collate_fn=collate_fn,
         )
 
         if args.max_steps > 0:
@@ -573,7 +562,6 @@ class MultiAVModel:
                 mininterval=0,
             )
             for step, batch in enumerate(batch_iterator):
-                print(batch)
                 if steps_trained_in_current_epoch > 0:
                     steps_trained_in_current_epoch -= 1
                     continue
@@ -1309,11 +1297,6 @@ class MultiAVModel:
                     and self.args.save_knowledge_dataset_with_checkpoints
                 ):
                     raise NotImplementedError()
-                    # output_dataset_directory = os.path.join(
-                    #     output_dir, "knowledge_dataset"
-                    # )
-                    # os.makedirs(output_dataset_directory, exist_ok=True)
-                    # self.retriever.save_pretrained(output_dataset_directory)
             else:
                 os.makedirs(os.path.join(output_dir, "encoder"), exist_ok=True)
                 os.makedirs(os.path.join(output_dir, "decoder"), exist_ok=True)
@@ -1380,44 +1363,8 @@ class MultiAVModel:
                 "decoder_input_ids": y_ids.to(device),
                 "labels": labels.to(device),
             }
-        # elif self.args.model_type in ["mbart"]:
         else:
             raise NotImplementedError()
-            # inputs = {
-            #     "input_ids": batch["input_ids"].to(device),
-            #     "attention_mask": batch["attention_mask"].to(device),
-            #     "decoder_input_ids": batch["decoder_input_ids"].to(device),
-            #     "labels": batch["labels"].to(device),
-            # }
-        # elif self.args.model_type in ["rag-token", "rag-sequence"]:
-        #     inputs = {
-        #         "input_ids": batch["input_ids"].to(device),
-        #         "attention_mask": batch["attention_mask"].to(device),
-        #         "decoder_input_ids": batch["decoder_input_ids"].to(device),
-        #         "labels": batch["decoder_input_ids"].to(device),
-        #         "reduce_loss": True,
-        #     }
-        # elif self.args.use_hf_datasets:
-        #     labels = batch["decoder_input_ids"]
-        #     labels_masked = labels.clone()
-        #     labels_masked[labels_masked == self.decoder_tokenizer.pad_token_id] = -100
-
-        #     inputs = {
-        #         "input_ids": batch["input_ids"].to(device),
-        #         "attention_mask": batch["attention_mask"].to(device),
-        #         "decoder_input_ids": batch["decoder_input_ids"].to(device),
-        #         "labels": labels_masked.to(device),
-        #     }
-        # else:
-        #     labels = batch[1]
-        #     labels_masked = labels.clone()
-        #     labels_masked[labels_masked == self.decoder_tokenizer.pad_token_id] = -100
-
-        #     inputs = {
-        #         "input_ids": batch[0].to(device),
-        #         "decoder_input_ids": labels.to(device),
-        #         "labels": labels_masked.to(device),
-        #     }
 
         return inputs
 
