@@ -1071,78 +1071,96 @@ class MultiAVModel:
         Returns:
             preds: List of list of generated sequences.
         """  # noqa: ignore flake8"
+        # print("Predicting...")
 
         self._move_model_to_device()
+        # print("Moved model to device...")
         if self.args.model_type != "bart":
             raise NotImplementedError()
 
         all_outputs = []
-        # Batching
+        # print(to_predict)
+        # print(self.args.eval_batch_size)
+        # print(to_predict[0 : self.args.eval_batch_size])
+        # print([i for i in range(0, len(to_predict), self.args.eval_batch_size)])
+
         for batch in tqdm(
             [
                 to_predict[i : i + self.args.eval_batch_size]
                 for i in range(0, len(to_predict), self.args.eval_batch_size)
             ],
             desc="Generating outputs",
-            disable=self.args.silent,
+            # disable=self.args.silent,
         ):
+            logging.info(len(batch))
             # Each batch should be list of str
             # Append the first key
             orig_batch = batch
             batch = [context + ";" for context in batch]
-            for attribute in self.args.attributes:
-                batch = [context + " " + attribute + ":" for context in batch]
-
+            for attribute in self.args.attributes:  # Loop over attributes
+                batch = [
+                    context + " " + attribute + ":" for context in batch
+                ]  # Append the attribute to the context
+                logging.info(batch)
                 input_ids = self.encoder_tokenizer.batch_encode_plus(
                     batch,
                     max_length=self.args.max_seq_length,
                     padding="max_length",
                     return_tensors="pt",
                     truncation=True,
-                )["input_ids"]
-                input_ids = input_ids.to(self.device)
+                )[
+                    "input_ids"
+                ]  # encode everything
 
-                # we would first predict the number of continuations for each context
-                # (may not be uniform across contexts)
-                # Then calculate the maximum and use that as n_beams and num_return_sequences
-                # Then take the top-k with k being dependent on each context's number of continuations
-                # As a shortcut maybe add in the number of continuations to the input data
-                # batch size generally is increasing as we go through the attributes.
-                # maybe need some way to handle this.
-                # num_continuations = self.model.predict_num_continuations(input_ids)
+                output_tokens_collated = []
 
                 # Temporarily set the number of continuations per context to num_return_sequences
                 # TODO how to handle aggregation of probabilities
                 num_continuations = [self.args.num_return_sequences] * len(batch)
+                logging.info(num_continuations)
+                # Split into sub-batches of size args.eval_batch_size to avoid oom
+                for i, input_ids_t in enumerate(
+                    torch.split(input_ids, self.args.eval_batch_size)
+                ):
+                    input_ids_t = input_ids_t.to(self.device)
+                    # we would first predict the number of continuations for each context
+                    # (may not be uniform across contexts)
+                    # Then calculate the maximum and use that as n_beams and num_return_sequences
+                    # Then take the top-k with k being dependent on each context's number of continuations
+                    # As a shortcut maybe add in the number of continuations to the input data
+                    # batch size generally is increasing as we go through the attributes.
+                    # maybe need some way to handle this.
+                    # num_continuations = self.model.predict_num_continuations(input_ids)
 
-                outputs = self.model.generate(
-                    input_ids=input_ids,
-                    num_beams=self.args.num_beams,
-                    max_length=self.args.max_length,
-                    min_length=1,
-                    length_penalty=self.args.length_penalty,
-                    early_stopping=self.args.early_stopping,
-                    repetition_penalty=self.args.repetition_penalty,
-                    do_sample=self.args.do_sample,
-                    top_k=self.args.top_k,
-                    top_p=self.args.top_p,
-                    num_return_sequences=self.args.num_return_sequences,
-                )
-                outputs_cpu = outputs.cpu().numpy()
-                output_tokens = [
-                    self.decoder_tokenizer.decode(
-                        output_id,
-                        skip_special_tokens=self.args.skip_special_tokens,
-                        clean_up_tokenization_spaces=True,
+                    outputs = self.model.generate(
+                        input_ids=input_ids_t,
+                        num_beams=self.args.num_beams,
+                        max_length=self.args.max_length,
+                        min_length=1,
+                        length_penalty=self.args.length_penalty,
+                        early_stopping=self.args.early_stopping,
+                        repetition_penalty=self.args.repetition_penalty,
+                        do_sample=self.args.do_sample,
+                        top_k=self.args.top_k,
+                        top_p=self.args.top_p,
+                        num_return_sequences=self.args.num_return_sequences,
                     )
-                    for output_id in all_outputs
-                ]
-                output_tokens_collated = [
-                    output_tokens[i : i + self.args.num_return_sequences]
-                    for i in range(
-                        0, len(output_tokens), self.args.num_return_sequences
-                    )
-                ]
+                    # outputs_cpu = outputs.cpu().numpy()
+                    output_tokens = [
+                        self.decoder_tokenizer.decode(
+                            output_id,
+                            skip_special_tokens=self.args.skip_special_tokens,
+                            clean_up_tokenization_spaces=True,
+                        )
+                        for output_id in outputs
+                    ]
+                    output_tokens_collated_ = [
+                        output_tokens[i : i + self.args.num_return_sequences]
+                        for i in range(
+                            0, len(output_tokens), self.args.num_return_sequences
+                        )
+                    ]
+                    output_tokens_collated += output_tokens_collated_
 
                 newbatch = []
                 for i, (context, continuation_list) in enumerate(
@@ -1156,15 +1174,28 @@ class MultiAVModel:
                         )  # append the values
                         newbatch.append(new_context)
                 batch = newbatch
+
+            def _parse_output(output: str):
+                kv_pairs = output.split(", ")
+                return {kv.split(":")[0]: kv.split(":")[1] for kv in kv_pairs}
+
             # After looping over the attributes, we should have a list of context + attribute:value pairs
             outputs = defaultdict(lambda: [])
             for completed_context in batch:
-                context, output = completed_context.split(";")[0]
-                outputs[context] += [output]
+                context = completed_context.split("; ")[0]
+                output = " ".join(
+                    completed_context.split("; ")[1:]
+                )  # the model can decode ; which interferes with use as a delimiter, should use special token instead
+                try:
+                    outputs[context] += [_parse_output(output)]
+                except Exception as e:
+                    logging.error(e)
+                    logging.error(output)
 
             for context in orig_batch:
                 all_outputs.append(outputs[context])
 
+        logging.info(json.dumps(all_outputs, indent=2))
         return all_outputs
 
     def _decode(self, output_id):

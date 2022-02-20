@@ -251,24 +251,24 @@ def preprocess_data_bart(
 
         return input_texts, target_texts
 
-    if mode == "train":
-        # if tf:
-        input_texts, target_texts = teacher_force_data(input_text, target_texts)
-        # print(input_texts, target_texts)
-        input_ids = tokenizer.batch_encode_plus(
-            input_texts,
-            max_length=args.max_seq_length,
-            padding="max_length",
-            return_tensors="pt",
-            truncation=True,
-        )
-        target_ids = tokenizer.batch_encode_plus(
-            target_texts,
-            max_length=args.max_seq_length,
-            padding="max_length",
-            return_tensors="pt",
-            truncation=True,
-        )
+    # if mode == "train":
+    # if tf:
+    input_texts, target_texts = teacher_force_data(input_text, target_texts)
+    # print(input_texts, target_texts)
+    input_ids = tokenizer.batch_encode_plus(
+        input_texts,
+        max_length=args.max_seq_length,
+        padding="max_length",
+        return_tensors="pt",
+        truncation=True,
+    )
+    target_ids = tokenizer.batch_encode_plus(
+        target_texts,
+        max_length=args.max_seq_length,
+        padding="max_length",
+        return_tensors="pt",
+        truncation=True,
+    )
     out = {
         "source_ids": input_ids["input_ids"].squeeze(),
         "source_mask": input_ids["attention_mask"].squeeze(),
