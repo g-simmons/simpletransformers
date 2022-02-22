@@ -1,5 +1,5 @@
 import json
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import logging
 import math
 import os
@@ -9,6 +9,7 @@ from dataclasses import asdict
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from collections import defaultdict
+from attr import attr
 
 import numpy as np
 import pandas as pd
@@ -990,9 +991,8 @@ class MultiAVModel:
             # This doesn't allow for beam search-esque aggregation of
             # probabilities across the keys, but it's a start.
             to_predict = [context for context, mappings in eval_data]
-            preds = self.predict(to_predict)
             labels = [mappings for context, mappings in eval_data]
-
+            preds = self.predict(to_predict, labels, use_gs_continuations=True)
             result = self.compute_metrics(labels, preds, **kwargs)
             self.results.update(result)
 
@@ -1061,47 +1061,104 @@ class MultiAVModel:
 
         return results
 
-    def predict(self, to_predict: List[str]) -> List[List[str]]:
+    @staticmethod
+    def _concat_attribute_query(batch, attribute):
+        batch = [
+            context + " " + attribute + ":" for context in batch
+        ]  # Append the attribute to the context
+        return batch
+
+    @staticmethod
+    def _convert_to_df(
+        batch: List[str], batch_mappings: List[List[Dict[str, str]]]
+    ) -> pd.DataFrame:
+        rows = []
+        for context, mappings in zip(batch, batch_mappings):
+            for mapping in mappings:
+                row = {
+                    "context": context,
+                }
+                for k, v in mapping.items():
+                    row[k] = v
+                rows.append(row)
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _get_num_continuations(df, prev_attr_values, current_attr, current_context):
+        prev_keys = sorted(list(prev_attr_values.keys()))
+        prev_values = [prev_attr_values[x] for x in prev_keys]
+        try:
+            val = (
+                df.groupby(["context"] + prev_keys)
+                .agg({current_attr: "nunique"})
+                .loc[tuple([current_context] + prev_values), current_attr]
+            )
+            return val
+        except KeyError:
+            DEFAULT_CONTINUATIONS = 2
+            return DEFAULT_CONTINUATIONS
+
+    @staticmethod
+    def _parse_output_mapping(output: str) -> Dict[str, str]:
+        """
+        parses a comma-separated string of the form "key1:value1,key2:value2" into a dictionary.
+        """
+        kv_pairs = output.split(", ")
+        return {
+            kv.split(":")[0]: kv.split(":")[1]
+            for kv in kv_pairs
+            if kv.split(":")[1] != ""
+        }
+
+    @staticmethod
+    def _get_output(completed_context: str):
+        if len(completed_context.split("; ")) > 1:
+            output = " ".join(completed_context.split("; ")[1:])
+            return output
+        else:
+            return None
+
+    def predict(
+        self,
+        to_predict: List[str],
+        mappings: Optional[List[List[Dict[str, str]]]] = None,
+        use_gs_continuations=False,
+        use_constant_continuations=False,
+    ) -> List[List[str]]:
         """
         Performs predictions on a list of text.
 
         Args:
             to_predict: A python list of text (str) to be sent to the model for prediction. Note that the prefix should be prepended to the text.
+            mappings:
 
         Returns:
             preds: List of list of generated sequences.
         """  # noqa: ignore flake8"
-        # print("Predicting...")
-
-        self._move_model_to_device()
-        # print("Moved model to device...")
         if self.args.model_type != "bart":
             raise NotImplementedError()
 
+        self._move_model_to_device()
         all_outputs = []
-        # print(to_predict)
-        # print(self.args.eval_batch_size)
-        # print(to_predict[0 : self.args.eval_batch_size])
-        # print([i for i in range(0, len(to_predict), self.args.eval_batch_size)])
 
-        for batch in tqdm(
+        for batch, batch_mappings in tqdm(
             [
-                to_predict[i : i + self.args.eval_batch_size]
+                (
+                    to_predict[i : i + self.args.eval_batch_size],
+                    mappings[i : i + self.args.eval_batch_size],
+                )
                 for i in range(0, len(to_predict), self.args.eval_batch_size)
             ],
             desc="Generating outputs",
             # disable=self.args.silent,
         ):
-            logging.info(len(batch))
-            # Each batch should be list of str
-            # Append the first key
+            # logging.info(len(batch))
             orig_batch = batch
             batch = [context + ";" for context in batch]
+            prev_attrs = []
             for attribute in self.args.attributes:  # Loop over attributes
-                batch = [
-                    context + " " + attribute + ":" for context in batch
-                ]  # Append the attribute to the context
-                logging.info(batch)
+                batch = self._concat_attribute_query(batch, attribute)
+                # logging.info(batch)
                 input_ids = self.encoder_tokenizer.batch_encode_plus(
                     batch,
                     max_length=self.args.max_seq_length,
@@ -1116,25 +1173,45 @@ class MultiAVModel:
 
                 # Temporarily set the number of continuations per context to num_return_sequences
                 # TODO how to handle aggregation of probabilities
-                num_continuations = [self.args.num_return_sequences] * len(batch)
-                logging.info(num_continuations)
+
+                if use_gs_continuations and mappings is not None:
+                    orig_contexts = [ctx.split(";")[0] for ctx in orig_batch]
+                    df = self._convert_to_df(orig_contexts, batch_mappings)
+                    num_continuations = []
+                    for completed_context in batch:
+                        # get previous attribute values
+                        output = self._get_output(completed_context)
+                        if output:
+                            prev_attrs = self._parse_output_mapping(output)
+                        else:
+                            prev_attrs = {}
+
+                        num_continuations.append(
+                            self._get_num_continuations(
+                                df,
+                                prev_attrs,
+                                attribute,
+                                completed_context.split(";")[0],
+                            )
+                        )
+
+                elif use_constant_continuations:
+                    num_continuations = [1] * len(batch)
+
+                assert len(num_continuations) == len(batch)
+                # logging.info(num_continuations)
                 # Split into sub-batches of size args.eval_batch_size to avoid oom
+                # can set the number of generations here to max num_continuations
                 for i, input_ids_t in enumerate(
                     torch.split(input_ids, self.args.eval_batch_size)
                 ):
                     input_ids_t = input_ids_t.to(self.device)
-                    # we would first predict the number of continuations for each context
-                    # (may not be uniform across contexts)
-                    # Then calculate the maximum and use that as n_beams and num_return_sequences
-                    # Then take the top-k with k being dependent on each context's number of continuations
-                    # As a shortcut maybe add in the number of continuations to the input data
-                    # batch size generally is increasing as we go through the attributes.
-                    # maybe need some way to handle this.
-                    # num_continuations = self.model.predict_num_continuations(input_ids)
+
+                    n_beams_returns = max(num_continuations)
 
                     outputs = self.model.generate(
                         input_ids=input_ids_t,
-                        num_beams=self.args.num_beams,
+                        num_beams=5,
                         max_length=self.args.max_length,
                         min_length=1,
                         length_penalty=self.args.length_penalty,
@@ -1143,7 +1220,7 @@ class MultiAVModel:
                         do_sample=self.args.do_sample,
                         top_k=self.args.top_k,
                         top_p=self.args.top_p,
-                        num_return_sequences=self.args.num_return_sequences,
+                        num_return_sequences=n_beams_returns,
                     )
                     # outputs_cpu = outputs.cpu().numpy()
                     output_tokens = [
@@ -1155,12 +1232,13 @@ class MultiAVModel:
                         for output_id in outputs
                     ]
                     output_tokens_collated_ = [
-                        output_tokens[i : i + self.args.num_return_sequences]
-                        for i in range(
-                            0, len(output_tokens), self.args.num_return_sequences
-                        )
+                        output_tokens[i : i + n_beams_returns]
+                        for i in range(0, len(output_tokens), n_beams_returns)
                     ]
                     output_tokens_collated += output_tokens_collated_
+
+                assert len(num_continuations) == len(batch)
+                assert len(output_tokens_collated) == len(batch)
 
                 newbatch = []
                 for i, (context, continuation_list) in enumerate(
@@ -1173,21 +1251,18 @@ class MultiAVModel:
                             context + continuation_str + ","
                         )  # append the values
                         newbatch.append(new_context)
-                batch = newbatch
 
-            def _parse_output(output: str):
-                kv_pairs = output.split(", ")
-                return {kv.split(":")[0]: kv.split(":")[1] for kv in kv_pairs}
+                batch = newbatch
 
             # After looping over the attributes, we should have a list of context + attribute:value pairs
             outputs = defaultdict(lambda: [])
             for completed_context in batch:
                 context = completed_context.split("; ")[0]
-                output = " ".join(
-                    completed_context.split("; ")[1:]
+                output = self._get_output(
+                    completed_context
                 )  # the model can decode ; which interferes with use as a delimiter, should use special token instead
                 try:
-                    outputs[context] += [_parse_output(output)]
+                    outputs[context] += [self._parse_output_mapping(output)]
                 except Exception as e:
                     logging.error(e)
                     logging.error(output)
@@ -1195,7 +1270,7 @@ class MultiAVModel:
             for context in orig_batch:
                 all_outputs.append(outputs[context])
 
-        logging.info(json.dumps(all_outputs, indent=2))
+        # logging.info(json.dumps(all_outputs, indent=2))
         return all_outputs
 
     def _decode(self, output_id):
