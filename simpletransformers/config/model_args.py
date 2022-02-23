@@ -309,7 +309,7 @@ class MultiAVArgs(ModelArgs):
     do_sample: bool = False
     early_stopping: bool = True
     evaluate_generated_text: bool = False
-    tf: bool = True,
+    tf: bool = (True,)
     length_penalty: float = 2.0
     max_length: int = 20
     max_steps: int = -1
@@ -319,6 +319,8 @@ class MultiAVArgs(ModelArgs):
     top_k: float = None
     top_p: float = None
     use_multiprocessed_decoding: bool = False
+    use_diverse_decoding: bool = False
+    diversity_penalty: float = 0.0
     attributes: List[str] = field(default_factory=list)
 
     def save(self, output_dir):

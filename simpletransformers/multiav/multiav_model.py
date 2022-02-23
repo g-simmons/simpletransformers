@@ -1,4 +1,5 @@
 import json
+from re import I
 from typing import List, Tuple, Dict, Optional
 import logging
 import math
@@ -1085,7 +1086,12 @@ class MultiAVModel:
 
     @staticmethod
     def _get_num_continuations(df, prev_attr_values, current_attr, current_context):
-        prev_keys = sorted(list(prev_attr_values.keys()))
+        # logging.info("current context:", current_context)
+        # logging.info(prev_attr_values)
+        # logging.info("\n")
+        prev_keys = sorted(
+            list([k for k, v in prev_attr_values.items() if v is not None])
+        )
         prev_values = [prev_attr_values[x] for x in prev_keys]
         try:
             val = (
@@ -1093,9 +1099,11 @@ class MultiAVModel:
                 .agg({current_attr: "nunique"})
                 .loc[tuple([current_context] + prev_values), current_attr]
             )
+            logging.info(f"{val} continuations found for " + str(prev_attr_values))
             return val
         except KeyError:
-            DEFAULT_CONTINUATIONS = 2
+            logging.info("No continuations found for " + str(prev_attr_values))
+            DEFAULT_CONTINUATIONS = 0
             return DEFAULT_CONTINUATIONS
 
     @staticmethod
@@ -1105,7 +1113,7 @@ class MultiAVModel:
         """
         kv_pairs = output.split(", ")
         return {
-            kv.split(":")[0]: kv.split(":")[1]
+            kv.split(":")[0]: kv.split(":")[1].replace(",", "")
             for kv in kv_pairs
             if kv.split(":")[1] != ""
         }
@@ -1159,6 +1167,39 @@ class MultiAVModel:
             for attribute in self.args.attributes:  # Loop over attributes
                 batch = self._concat_attribute_query(batch, attribute)
                 # logging.info(batch)
+
+                if use_gs_continuations and mappings is not None:
+                    newbatch = []
+                    orig_contexts = [ctx.split(";")[0] for ctx in orig_batch]
+                    df = self._convert_to_df(orig_contexts, batch_mappings)
+                    num_continuations = []
+                    for completed_context in batch:
+                        # get previous attribute values
+                        output = self._get_output(completed_context)
+                        if output:
+                            prev_attrs = self._parse_output_mapping(output)
+                        else:
+                            prev_attrs = {}
+
+                        n_cont = self._get_num_continuations(
+                            df,
+                            prev_attrs,
+                            attribute,
+                            completed_context.split(";")[0],
+                        )
+                        if n_cont > 0:
+                            num_continuations.append(n_cont)
+                            newbatch.append(completed_context)
+                    batch = newbatch
+
+                elif use_constant_continuations:
+                    num_continuations = [1] * len(batch)
+
+                if num_continuations == []:
+                    return []
+
+                assert len(num_continuations) == len(batch)
+
                 input_ids = self.encoder_tokenizer.batch_encode_plus(
                     batch,
                     max_length=self.args.max_seq_length,
@@ -1173,45 +1214,27 @@ class MultiAVModel:
 
                 # Temporarily set the number of continuations per context to num_return_sequences
                 # TODO how to handle aggregation of probabilities
-
-                if use_gs_continuations and mappings is not None:
-                    orig_contexts = [ctx.split(";")[0] for ctx in orig_batch]
-                    df = self._convert_to_df(orig_contexts, batch_mappings)
-                    num_continuations = []
-                    for completed_context in batch:
-                        # get previous attribute values
-                        output = self._get_output(completed_context)
-                        if output:
-                            prev_attrs = self._parse_output_mapping(output)
-                        else:
-                            prev_attrs = {}
-
-                        num_continuations.append(
-                            self._get_num_continuations(
-                                df,
-                                prev_attrs,
-                                attribute,
-                                completed_context.split(";")[0],
-                            )
-                        )
-
-                elif use_constant_continuations:
-                    num_continuations = [1] * len(batch)
-
-                assert len(num_continuations) == len(batch)
                 # logging.info(num_continuations)
                 # Split into sub-batches of size args.eval_batch_size to avoid oom
                 # can set the number of generations here to max num_continuations
+                logging.info(f"input_ids: {input_ids.shape}")
                 for i, input_ids_t in enumerate(
                     torch.split(input_ids, self.args.eval_batch_size)
                 ):
+                    logging.info(f"input_ids_t: {input_ids_t.shape}")
                     input_ids_t = input_ids_t.to(self.device)
 
                     n_beams_returns = max(num_continuations)
 
+                    if self.args.use_diverse_decoding:
+                        logging.info("Using diverse decoding")
+                        num_beam_groups = n_beams_returns
+                        diversity_penalty = self.args.diversity_penalty
+
                     outputs = self.model.generate(
                         input_ids=input_ids_t,
-                        num_beams=5,
+                        num_beams=int(10),
+                        num_beam_groups=int(num_beam_groups),
                         max_length=self.args.max_length,
                         min_length=1,
                         length_penalty=self.args.length_penalty,
@@ -1238,7 +1261,10 @@ class MultiAVModel:
                     output_tokens_collated += output_tokens_collated_
 
                 assert len(num_continuations) == len(batch)
-                assert len(output_tokens_collated) == len(batch)
+                if not len(output_tokens_collated) == len(batch):
+                    logging.error("len(output_tokens_collated) != len(batch)")
+                    logging.error(output_tokens_collated)
+                    logging.error(batch)
 
                 newbatch = []
                 for i, (context, continuation_list) in enumerate(
